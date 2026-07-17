@@ -1,0 +1,328 @@
+## `aowllens render <file.nif> [needle]` — render NIF node(s) as compact
+## pseudo-Nim. Nimony port of aiflens's heuristic pretty-printer.
+
+import std/[os, strutils]
+include "nifprelude"
+import core
+import aowlkit/json
+
+type
+  RNode = ref object
+    isAtom: bool
+    tag: string
+    atom: string
+    isSymDef: bool
+    sym: string
+    children: seq[RNode]
+
+const maxLines = 40
+
+# ── small helpers replacing Nim2 slices / sets / Table ───────────────────────
+
+proc among(s: string; items: openArray[string]): bool =
+  for i in 0 ..< items.len:
+    if items[i] == s: return true
+  return false
+
+proc tailFrom(cs: seq[RNode]; startIdx: int): seq[RNode] =
+  result = @[]
+  var i = startIdx
+  while i < cs.len:
+    result.add cs[i]; inc i
+
+proc isIdentStart(c: char): bool =
+  (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+
+proc isIdentCont(c: char): bool =
+  isIdentStart(c) or (c >= '0' and c <= '9')
+
+proc binOp(tag: string): string =
+  case tag
+  of "add": "+"
+  of "sub": "-"
+  of "mul": "*"
+  of "div": "div"
+  of "mod": "mod"
+  of "shl": "shl"
+  of "shr": "shr"
+  of "bitand": "and"
+  of "bitor": "or"
+  of "bitxor": "xor"
+  of "eq": "=="
+  of "neq": "!="
+  of "lt": "<"
+  of "le": "<="
+  of "gt": ">"
+  of "ge": ">="
+  of "and": "and"
+  of "or": "or"
+  of "xor": "xor"
+  else: ""
+
+# ── atom / symbol ────────────────────────────────────────────────────────────
+
+proc atomStr(tok: PackedToken): string =
+  case tok.kind
+  of DotToken: "."
+  of Ident: pool.strings[tok.litId]
+  of Symbol: symName(tok)
+  of SymbolDef: symName(tok)
+  of StringLit: "\"" & pool.strings[tok.litId] & "\""
+  of CharLit: "'" & $tok.charLit & "'"
+  of IntLit: $pool.integers[tok.intId]
+  of UIntLit: $pool.uintegers[tok.uintId]
+  of FloatLit: $pool.floats[tok.floatId]
+  else: ""
+
+proc demangle(s: string): string =
+  if s.len == 0: return ""
+  if s == ".": return ""
+  if s[0] == '"': return s
+  if isIdentStart(s[0]):
+    var i = 1
+    while i < s.len and isIdentCont(s[i]): inc i
+    if i < s.len and s[i] == '.' and i + 1 < s.len and
+       (s[i+1] >= '0' and s[i+1] <= '9'):
+      let name = substr(s, 0, i - 1)
+      var j = i + 1
+      while j < s.len and (s[j] >= '0' and s[j] <= '9'): inc j
+      let rest = substr(s, j, s.len - 1)
+      if rest.len == 0 or rest[0] == '.':
+        return name
+  return s
+
+# ── buffer -> tree ───────────────────────────────────────────────────────────
+
+proc parseNode(buf: TokenBuf; i: var int): RNode =
+  if i >= buf.len:
+    return RNode(isAtom: true, tag: "", atom: "", isSymDef: false, sym: "",
+                 children: @[])
+  let tok = buf[i]
+  case tok.kind
+  of ParLe:
+    result = RNode(isAtom: false, tag: tagName(tok), atom: "", isSymDef: false,
+                   sym: "", children: @[])
+    inc i
+    while i < buf.len and buf[i].kind != ParRi:
+      result.children.add parseNode(buf, i)
+    if i < buf.len: inc i
+  of ParRi:
+    inc i
+    result = RNode(isAtom: true, tag: "", atom: "", isSymDef: false, sym: "",
+                   children: @[])
+  of SymbolDef:
+    result = RNode(isAtom: true, tag: "", atom: atomStr(tok), isSymDef: true,
+                   sym: symName(tok), children: @[])
+    inc i
+  else:
+    result = RNode(isAtom: true, tag: "", atom: atomStr(tok), isSymDef: false,
+                   sym: "", children: @[])
+    inc i
+
+# ── tree -> pseudo-Nim ───────────────────────────────────────────────────────
+
+proc renderNode(n: RNode): string
+
+proc rr(n: RNode): string =
+  if n.isAtom: demangle(n.atom) else: renderNode(n)
+
+proc nonempty(cs: seq[RNode]): seq[string] =
+  result = @[]
+  for i in 0 ..< cs.len:
+    let r = rr(cs[i])
+    if r.len > 0: result.add r
+
+proc childNodes(cs: seq[RNode]; tag: string): seq[RNode] =
+  result = @[]
+  for i in 0 ..< cs.len:
+    if not cs[i].isAtom and cs[i].tag == tag: result.add cs[i]
+
+proc indentBlock(s: string): string =
+  var parts: seq[string] = @[]
+  for l in splitLines(s): parts.add "  " & l
+  result = joinSeq(parts, "\n")
+
+proc renderNode(n: RNode): string =
+  if n.isAtom: return demangle(n.atom)
+  let tag = n.tag
+  let ch = n.children
+
+  if tag == "stmts":
+    var lines: seq[string] = @[]
+    for i in 0 ..< ch.len:
+      let r = rr(ch[i])
+      if r.len > 0: lines.add r
+    return joinSeq(lines, "\n")
+
+  if among(tag, ["proc", "func", "method", "macro", "template", "iterator",
+                 "converter"]):
+    let name = if ch.len > 0: rr(ch[0]) else: ""
+    let params = childNodes(ch, "params")
+    let paramStr = if params.len > 0: renderNode(params[0]) else: ""
+    let body = childNodes(ch, "stmts")
+    var ret = ""
+    var seenParams = false
+    let rest = if ch.len > 1: tailFrom(ch, 1) else: @[]
+    for i in 0 ..< rest.len:
+      let c = rest[i]
+      if not c.isAtom and c.tag == "params":
+        seenParams = true
+        continue
+      if seenParams:
+        let r = rr(c)
+        if r.len > 0 and not (not c.isAtom and c.tag == "stmts"):
+          ret = r
+          break
+    var head = tag & " " & name & "(" & paramStr & ")"
+    if ret.len > 0: head = head & ": " & ret
+    if body.len > 0:
+      return head & " =\n" & indentBlock(renderNode(body[0]))
+    return head
+
+  if tag == "params":
+    var ps: seq[string] = @[]
+    for i in 0 ..< ch.len:
+      if not ch[i].isAtom and among(ch[i].tag, ["param", "fld"]): ps.add rr(ch[i])
+    return joinSeq(ps, ", ")
+
+  if among(tag, ["param", "fld"]):
+    let name = if ch.len > 0: rr(ch[0]) else: ""
+    var typ = ""
+    let rest = if ch.len > 1: tailFrom(ch, 1) else: @[]
+    for i in 0 ..< rest.len:
+      let r = rr(rest[i])
+      if r.len > 0:
+        typ = r
+        break
+    return if typ.len > 0: name & ": " & typ else: name
+
+  if among(tag, ["let", "var", "const", "glet", "gvar", "tvar", "cursor"]):
+    let kw = if among(tag, ["var", "gvar", "tvar"]): "var"
+             elif tag == "const": "const" else: "let"
+    let name = if ch.len > 0: rr(ch[0]) else: ""
+    let rest = nonempty(if ch.len > 1: tailFrom(ch, 1) else: @[])
+    if rest.len >= 2:
+      return kw & " " & name & ": " & rest[0] & " = " & rest[rest.len - 1]
+    if rest.len == 1: return kw & " " & name & " = " & rest[0]
+    return kw & " " & name
+
+  if among(tag, ["call", "cmd"]):
+    if ch.len == 0: return tag & "()"
+    let callee = rr(ch[0])
+    var args: seq[string] = @[]
+    let rest = tailFrom(ch, 1)
+    for i in 0 ..< rest.len:
+      let a = rr(rest[i])
+      if a.len > 0: args.add a
+    return callee & "(" & joinSeq(args, ", ") & ")"
+
+  if tag == "infix":
+    if ch.len >= 3: return rr(ch[1]) & " " & rr(ch[0]) & " " & rr(ch[2])
+    var ps: seq[string] = @[]
+    for i in 0 ..< ch.len: ps.add rr(ch[i])
+    return joinSeq(ps, " ")
+
+  if binOp(tag).len > 0 and ch.len >= 3:
+    return rr(ch[ch.len - 2]) & " " & binOp(tag) & " " & rr(ch[ch.len - 1])
+
+  if tag == "asgn" and ch.len >= 2:
+    return rr(ch[0]) & " = " & rr(ch[1])
+
+  if tag == "ret":
+    let inner = nonempty(ch)
+    return "return " & (if inner.len > 0: inner[0] else: "")
+
+  if tag == "result":
+    return ""
+
+  if among(tag, ["if", "when"]):
+    var parts: seq[string] = @[]
+    for i in 0 ..< ch.len:
+      let c = ch[i]
+      if c.isAtom: continue
+      let cc = c.children
+      if c.tag == "elif" and cc.len >= 2:
+        parts.add tag & " " & rr(cc[0]) & ": " & rr(cc[1])
+      elif c.tag == "else" and cc.len > 0:
+        parts.add "else: " & rr(cc[0])
+    return if parts.len > 0: joinSeq(parts, "\n") else: tag
+
+  if tag == "type":
+    let name = if ch.len > 0: rr(ch[0]) else: ""
+    var body = ""
+    let rest = if ch.len > 1: tailFrom(ch, 1) else: @[]
+    for i in 0 ..< rest.len:
+      let r = rr(rest[i])
+      if r.len > 0: body = r
+    return if body.len > 0: "type " & name & " = " & body else: "type " & name
+
+  if tag == "object":
+    let flds = childNodes(ch, "fld")
+    if flds.len > 0:
+      var lines: seq[string] = @[]
+      for i in 0 ..< flds.len: lines.add "  " & renderNode(flds[i])
+      return "object\n" & joinSeq(lines, "\n")
+    return "object"
+
+  if among(tag, ["i", "u"]): return if tag == "i": "int" else: "uint"
+  if tag == "f": return "float"
+
+  if tag == "suf": return if ch.len > 0: rr(ch[0]) else: ""
+
+  if among(tag, ["par", "conv"]):
+    let inner = nonempty(ch)
+    return if inner.len > 0: inner[inner.len - 1] else: ""
+
+  var parts: seq[string] = @[tag]
+  for i in 0 ..< ch.len:
+    let r = rr(ch[i])
+    if r.len > 0: parts.add r
+  return "(" & joinSeq(parts, " ") & ")"
+
+proc truncate(s: string): string =
+  let lines = splitLines(s)
+  if lines.len > maxLines:
+    var head: seq[string] = @[]
+    for i in 0 ..< maxLines: head.add lines[i]
+    return joinSeq(head, "\n") & " ..."
+  return s
+
+proc run*(params: seq[string]): Res =
+  if params.len < 1:
+    return errRes("usage: aowllens render <file.nif> [needle]", 1)
+  let path = params[0]
+  let needle = if params.len >= 2: params[1] else: ""
+  if not fileExists(path):
+    return errRes("no such file: " & path, 2)
+
+  var items: seq[string] = @[]
+  try:
+    var buf = loadBuf(path)
+    var i = 0
+    let root = parseNode(buf, i)
+    if root != nil and not root.isAtom:
+      for ci in 0 ..< root.children.len:
+        let c = root.children[ci]
+        if c.isAtom or c.children.len == 0: continue
+        let f0 = c.children[0]
+        if not f0.isAtom: continue
+        let sym = if f0.isSymDef: f0.sym else: f0.atom
+        if sym.len == 0 or sym == ".": continue
+        var name = baseName(sym)
+        if name.len == 0: name = demangle(f0.atom)
+        let kind = c.tag
+        if needle.len > 0 and not (sym == needle or startsWith(sym, needle) or
+                                   kind == needle or name == needle):
+          continue
+        items.add "{\"sym\":" & jStr(sym) & ",\"name\":" & jStr(name) &
+          ",\"kind\":" & jStr(kind) & ",\"render\":" &
+          jStr(truncate(renderNode(c))) & "}"
+  except:
+    items = @[]
+
+  var arr = "["
+  for i in 0 ..< items.len:
+    if i > 0: arr.add ","
+    arr.add items[i]
+  arr.add "]"
+  return okRes("{\"nodes\":" & arr & "}")

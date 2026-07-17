@@ -1,0 +1,41 @@
+## aowllens — a NIF lens for tooling, in nimony.
+##
+## The nimony port of aiflens: a thin CLI over Nimony's own NIF libraries that
+## reads `nimcache/*.nif` artifacts with the real parser and emits compact JSON
+## for a host tool (e.g. aowllsp, the aowl-code plugin) to consume. Because it
+## links the compiler's libraries, its line-info/symbol/tag handling always
+## matches the toolchain that produced the file.
+
+import std/[syncio, cmdline]
+import aowllenspkg/[core, decls, render, index, outline, serve]
+
+const Version = "0.1.0"
+
+proc usage() =
+  try:
+    write stderr, "usage: aowllens <decls|render|index|outline|query|serve|version> [args]\n"
+  except:
+    discard
+
+proc main() =
+  if paramCount() < 1:
+    usage(); quit 1
+  var rest: seq[string] = @[]
+  var i = 2
+  while i <= paramCount():
+    rest.add paramStr(i); inc i
+  case paramStr(1)
+  of "version", "--version", "-v":
+    echo "aowllens " & Version
+  of "decls": emit(decls.run(rest))
+  of "render": emit(render.run(rest))
+  of "index": emit(index.run(rest))
+  of "outline": emit(outline.run(rest))
+  of "query": emit(outline.runQuery(rest))
+  of "serve": serve()
+  else:
+    try: write stderr, "aowllens: unknown subcommand: " & paramStr(1) & "\n"
+    except: discard
+    usage(); quit 1
+
+main()
