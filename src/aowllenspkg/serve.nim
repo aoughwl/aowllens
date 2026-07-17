@@ -4,7 +4,7 @@
 ## persist across requests — the basis for a shared NIF daemon.
 
 import std/[syncio, strutils, json]
-import core, decls, render, index, outline
+import core, decls, render, index, outline, calls, types
 
 proc dispatch(cmd: string; args: seq[string]): Res =
   case cmd
@@ -13,6 +13,8 @@ proc dispatch(cmd: string; args: seq[string]): Res =
   of "index": index.run(args)
   of "outline": outline.run(args)
   of "query": outline.runQuery(args)
+  of "calls": calls.run(args)
+  of "types": types.run(args)
   else: errRes("unknown cmd: " & cmd, 1)
 
 proc parseReq(line: string; cmd: var string; args: var seq[string]) =
