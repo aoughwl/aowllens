@@ -79,9 +79,25 @@ proc builtinName(tag: string): string =
   else: ""
 
 proc baseType(typeNode: Node): string =
+  ## Type key: named type → base name; wrapper (ref/ptr/var/…) → wrapped type;
+  ## container (seq/array/…) → the constructor (so `seq[Cell]` keys on `seq`, not
+  ## the element); primitive → friendly name; else "". Kept in sync with members.nim.
+  if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
+  let t = typeNode.tag
+  if t == "ref" or t == "ptr" or t == "mut" or t == "var" or t == "out" or
+     t == "lent" or t == "sink" or t == "typedesc":
+    for k in 0 ..< typeNode.kids.len:
+      let inner = baseType(typeNode.kids[k])
+      if inner.len > 0: return inner
+    return ""
+  if t == "seq" or t == "array" or t == "openArray" or t == "uarray" or
+     t == "set" or t == "varargs":
+    return t
+  let b = builtinName(t)
+  if b.len > 0: return b
   let s = firstSym(typeNode)
   if s.len > 0: return human(baseName(s))
-  result = builtinName(typeNode.tag)
+  return ""
 
 proc findByTag(n: Node; tags: openArray[string]): int =
   for k in 0 ..< n.kids.len:

@@ -67,5 +67,35 @@ has "typeat o -> Outer"     "$("$B" typeat "$snif" $line 10 2>&1)" '"type":"Oute
 has "typeat o.inner -> Inner" "$("$B" typeat "$snif" $line 12 2>&1)" '"type":"Inner"'
 has "typeat o.inner.x -> int" "$("$B" typeat "$snif" $line 18 2>&1)" '"type":"int"'
 
+# ── container consistency (a `seq[Item]` field keys on the CONSTRUCTOR) ────────
+# A bare container must resolve to `seq` (its own ops), never to its element —
+# otherwise `xs.` would wrongly offer the element's fields. The INDEXED element
+# still resolves to the element type via the `[]` operator.
+cat > "$WORK/c.nim" <<'EOF'
+type
+  Item = object
+    v: int
+  Bag = object
+    items: seq[Item]
+
+proc use(b: Bag) =
+  discard b.items[0].v
+EOF
+( cd "$WORK" && "$NIMONY" check --nimcache:"$WORK/nc2" c.nim >/dev/null 2>&1 || true )
+csnif=""
+for f in $(find "$WORK/nc2" -name '*.s.nif' ! -name '*.idx.nif'); do
+  if grep -q 'Bag' "$f" && grep -q 'Item' "$f"; then csnif="$f"; break; fi
+done
+if [ -n "$csnif" ]; then
+  mBag="$("$B" members "$csnif" Bag 2>&1)"
+  has   "members Bag: seq field details as 'seq'" "$mBag" '"name":"items","kind":"fld","detail":"seq"'
+  hasnt "members Bag: no element-field leakage (v)" "$mBag" '"name":"v"'
+  # line 8 `  discard b.items[0].v`: 'b'=10, 'items'=12 (the '[]' element)
+  has "typeat b -> Bag"            "$("$B" typeat "$csnif" 8 10 2>&1)" '"type":"Bag"'
+  has "typeat b.items[0] -> Item"  "$("$B" typeat "$csnif" 8 12 2>&1)" '"type":"Item"'
+else
+  echo "newcmds: container fixture skipped (no .s.nif)"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "newcmds: PASS"; else echo "newcmds: FAILURES above"; fi
 exit "$fail"

@@ -83,11 +83,30 @@ proc builtinName(tag: string): string =
   else: ""
 
 proc baseType(typeNode: Node): string =
-  ## The human base name of a type node (`Dog.0.m` → `Dog`), or a friendly
-  ## primitive name for a builtin like `(i 64)` → `int`, else "".
+  ## The type a node denotes, as a resolution KEY:
+  ##   * a named type → its human base name (`Dog.0.m` → `Dog`);
+  ##   * a transparent wrapper (`ref`/`ptr`/`var`/…) → the wrapped type's key;
+  ##   * a container/constructor (`seq`/`array`/…) → the CONSTRUCTOR, so a
+  ##     `seq[Cell]` keys on `seq` (its ops), never on the element `Cell`. This is
+  ##     what lets a container receiver AND the routines that take one (`add(x: var
+  ##     seq[T])`) key on the same name and match;
+  ##   * a primitive (`(i 64)`) → a friendly name (`int`); else "".
+  if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
+  let t = typeNode.tag
+  if t == "ref" or t == "ptr" or t == "mut" or t == "var" or t == "out" or
+     t == "lent" or t == "sink" or t == "typedesc":
+    for k in 0 ..< typeNode.kids.len:
+      let inner = baseType(typeNode.kids[k])
+      if inner.len > 0: return inner
+    return ""
+  if t == "seq" or t == "array" or t == "openArray" or t == "uarray" or
+     t == "set" or t == "varargs":
+    return t
+  let b = builtinName(t)
+  if b.len > 0: return b
   let s = firstSym(typeNode)
   if s.len > 0: return human(baseName(s))
-  result = builtinName(typeNode.tag)
+  return ""
 
 proc among(s: string; xs: openArray[string]): bool =
   for i in 0 ..< xs.len:
