@@ -7,13 +7,13 @@
 ## matches the toolchain that produced the file.
 
 import std/[syncio, cmdline]
-import aowllenspkg/[core, decls, render, index, outline, calls, types, serve]
+import aowllenspkg/[core, decls, render, index, outline, calls, types, members, serve]
 
 const Version = "0.1.0"
 
 proc usage() =
   try:
-    write stderr, "usage: aowllens <decls|render|index|outline|query|calls|types|serve|version> [args]\n"
+    write stderr, "usage: aowllens <decls|render|index|outline|query|calls|types|members|serve|version> [args]\n"
   except:
     discard
 
@@ -34,6 +34,7 @@ proc main() =
   of "query": emit(outline.runQuery(rest))
   of "calls": emit(calls.run(rest))
   of "types": emit(types.run(rest))
+  of "members": emit(members.run(rest))
   of "serve": serve()
   else:
     try: write stderr, "aowllens: unknown subcommand: " & paramStr(1) & "\n"
