@@ -127,6 +127,26 @@ proc findDeep(n: Node; tags: openArray[string]): Node =
     if r.tag.len > 0: return r
   return Node(tag: "", sym: "", isDef: false, kids: @[])
 
+proc routineSig(n: Node): string =
+  ## A compact `(T1, T2): R` signature for a routine node — shown as the detail of
+  ## a proc/func member so completion tells you what to call, not just its owner.
+  let pi = findByTag(n, ["params"])
+  var sig = "("
+  if pi >= 0:
+    var first = true
+    for k in 0 ..< n.kids[pi].kids.len:
+      let p = n.kids[pi].kids[k]
+      if p.tag != "param" or p.kids.len <= 3: continue
+      let t = baseType(p.kids[3])
+      if not first: sig.add ", "
+      sig.add (if t.len > 0: t else: "_")
+      first = false
+  sig.add ")"
+  if pi >= 0 and pi + 1 < n.kids.len:
+    let rt = baseType(n.kids[pi + 1])
+    if rt.len > 0 and rt != "void": sig.add ": " & rt
+  result = sig
+
 type
   Pair = object
     a: string
@@ -138,6 +158,7 @@ type
     typ: string
     routine: string
     kind: string
+    sig: string
   Index = object
     bindType: seq[Pair]     ## (binding base name, type base name); first wins
     typeObj: seq[Named]     ## (type base name, its object/enum node)
@@ -202,7 +223,8 @@ proc build(n: Node; idx: var Index) =
         let p0 = n.kids[pi].kids[0]
         if p0.tag == "param" and p0.kids.len > 3:
           let ft = baseType(p0.kids[3])
-          if ft.len > 0: idx.ufcs.add Ufcs(typ: ft, routine: nm, kind: n.tag)
+          if ft.len > 0:
+            idx.ufcs.add Ufcs(typ: ft, routine: nm, kind: n.tag, sig: routineSig(n))
   for k in 0 ..< n.kids.len:
     build(n.kids[k], idx)
 
@@ -262,7 +284,7 @@ proc run*(params: seq[string]): Res =
           emitMember(items, seen, fnm, c.tag, fdetail)
     for m in 0 ..< idx.ufcs.len:
       if idx.ufcs[m].typ == t:
-        emitMember(items, seen, idx.ufcs[m].routine, idx.ufcs[m].kind, t)
+        emitMember(items, seen, idx.ufcs[m].routine, idx.ufcs[m].kind, idx.ufcs[m].sig)
     let par = lookup(idx.typeParent, t)
     if par.len > 0: queue.add par
 

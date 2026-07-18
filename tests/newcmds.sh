@@ -52,6 +52,7 @@ mDog="$("$B" members "$snif" Dog 2>&1)"
 has   "members Dog: own field breed"      "$mDog" '"name":"breed"'
 has   "members Dog: inherited field name" "$mDog" '"name":"name"'
 has   "members Dog: UFCS proc wag"        "$mDog" '"name":"wag"'
+has   "members Dog: wag detail is its signature" "$mDog" '"name":"wag","kind":"proc","detail":"(Dog): bool"'
 hasnt "members Dog: no lifecycle hooks"   "$mDog" '=destroy'
 
 # members: Outer offers its fields (and NOT Inner's).
