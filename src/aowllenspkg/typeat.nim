@@ -14,6 +14,7 @@
 import std/[os, strutils]
 include "nifprelude"
 import core
+import lens
 import aowlkit/json
 
 type
@@ -148,6 +149,21 @@ proc run*(params: seq[string]): Res =
     return errRes("line and col must be integers", 1)
   if not fileExists(path):
     return errRes("no such file: " & path, 2)
+
+  # THE INDEX FIRST. When aowlsem wrote a sidecar, the answer is recorded
+  # rather than reconstructed: the occurrence at this position already names
+  # the symbol it resolved to, so shadowing, overloads and dot chains are
+  # decided by the checker and not re-decided here. Falls through to the tree
+  # analysis below when there is no sidecar, or when it has nothing at this
+  # position (an imported symbol is declared in ITS module's index, not ours).
+  let lx = lens.load(path)
+  if lx.ok:
+    let sym = lens.symAt(lx, wantLine, wantCol)
+    if sym.len > 0:
+      let t = lens.typeOf(lx, sym)
+      if t.len > 0:
+        return okRes("{\"type\":" & jStr(t) & ",\"sym\":" & jStr(sym) & "}")
+
   let buf = loadBuf(path)
 
   # Resolution tables from the parsed forest.

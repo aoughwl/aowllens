@@ -19,6 +19,7 @@
 import std/[os, strutils]
 include "nifprelude"
 import core
+import lens
 import aowlkit/json
 
 type
@@ -253,11 +254,24 @@ proc run*(params: seq[string]): Res =
   for r in 0 ..< roots.len:
     build(roots[r], idx)
 
+  # aowlsem's index, when the build wrote one. Its member tables are the
+  # checker's own; the receiver resolution below is unchanged (`members` is
+  # asked by NAME, and a name has no position to resolve precisely from —
+  # that is what `typeat` is for).
+  let lx = lens.load(path)
+
   # Resolve the receiver to a type: a binding's type, else the receiver itself
   # if it names a type (enum-value / static access).
   var typeName = lookup(idx.bindType, receiver)
   if typeName.len == 0 and hasName(idx.typeObj, receiver):
     typeName = receiver
+  if typeName.len == 0 and lx.ok:
+    # The index knows bindings the tree walk cannot type (an imported generic
+    # instance, a `let` whose type was only ever inferred).
+    for i in 0 ..< lx.decls.len:
+      if lx.decls[i].name == receiver and lx.decls[i].kind != "type":
+        let t = lens.typeKey(lx.decls[i].typ)
+        if t.len > 0: (typeName = t; break)
   if typeName.len == 0:
     return okRes("[]")
 
@@ -272,7 +286,18 @@ proc run*(params: seq[string]): Res =
     queue.setLen(queue.len - 1)
     if contains(visited, t): continue
     visited.add t
-    if hasName(idx.typeObj, t):
+    # A type's FIELDS come from aowlsem's index when it wrote one: that table
+    # is the checker's own, already flattened across the inheritance chain and
+    # carrying each member's visibility — so a private field cannot leak into a
+    # completion and an inherited one cannot go missing. The UFCS pass below is
+    # unaffected; only the field half is taken from the index.
+    let ti = if lx.ok: lens.typeIndex(lx, t) else: -1
+    if ti >= 0:
+      let fldKind = if lx.types[ti].kind == "enum": "efld" else: "fld"
+      for f in 0 ..< lx.types[ti].fields.len:
+        let fl = lx.types[ti].fields[f]
+        emitMember(items, seen, fl.name, fldKind, fl.typ)
+    elif hasName(idx.typeObj, t):
       let body = lookupNode(idx.typeObj, t)
       let fldTag = if body.tag == "enum": "efld" else: "fld"
       for k in 0 ..< body.kids.len:
