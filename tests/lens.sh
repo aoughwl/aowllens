@@ -43,6 +43,9 @@ type
 proc speak(d: Dog): string = d.breed
 
 proc count(d: Cat): int = d.lives
+
+proc both(dg: Dog; ct: Cat): string =
+  result = speak(dg)
 EOF
 
 # probe.sh resolves the oracle's --sys:/--imp: set into probe.env; reuse it
@@ -79,9 +82,21 @@ want "d in speak(7:29) -> Dog" '{"type":"Dog","sym":"d.0"}' \
      "$LENS" typeat "$SNIF" 7 29
 want "d in count(9:26) -> Cat" '{"type":"Cat","sym":"d.1"}' \
      "$LENS" typeat "$SNIF" 9 26
-want "Dog's members" \
-     '[{"name":"breed","kind":"fld","detail":"string"},{"name":"speak","kind":"proc","detail":"(Dog): string"}]' \
+# `speak` and `both` both take a Dog first — the index states each routine's
+# receiver, so this is a filter over declarations, not a re-derivation of every
+# signature's first parameter.
+want "Dog's members: field + both UFCS routines" \
+     '[{"name":"breed","kind":"fld","detail":"string"},{"name":"speak","kind":"proc","detail":"(Dog): string"},{"name":"both","kind":"proc","detail":"(Dog, Cat): string"}]' \
      "$LENS" members "$SNIF" Dog
+
+# Call edges come straight from the index: an occurrence marked "call", its
+# owner, and the call site. The tree walk can still find the edge, but takes
+# its position from the emitted tokens — which on an aowlsem artifact carry
+# none, so only the index yields a usable one.
+MOD="$(basename "$PROBE_P" .p.nif)"
+want "both calls speak at 12:11" \
+     "[{\"caller\":\"both.0.$MOD\",\"callee\":\"speak.0.$MOD\",\"file\":\"shadow.nim\",\"line\":12,\"col\":11}]" \
+     "$LENS" calls "$SNIF"
 
 echo "negative control (sidecar hidden):"
 mv "$WORK/out.lens.nif" "$WORK/out.lens.hidden"

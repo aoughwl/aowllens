@@ -7,6 +7,7 @@
 import std/[os, strutils]
 include "nifprelude"
 import core
+import lens
 import aowlkit/json
 
 proc isRoutineTag(t: string): bool =
@@ -28,6 +29,31 @@ proc run*(params: seq[string]): Res =
   let wanted = if params.len >= 2: params[1] else: ""
   if not fileExists(path):
     return errRes("no such file: " & path, 2)
+
+  # aowlsem's index carries the edges directly: an occurrence marked "call"
+  # names the callee, its owner names the caller, and the position is the call
+  # site. That is the same graph the walk below reconstructs — but the walk
+  # takes its positions from the emitted tokens, which on an aowlsem artifact
+  # carry none, so there the index is the only source of a usable edge.
+  let lx = lens.load(path)
+  if lx.ok:
+    var edges: seq[string] = @[]
+    for i in 0 ..< lx.uses.len:
+      let u = lx.uses[i]
+      if u.role != "call" or u.owner.len == 0: continue
+      if wanted.len > 0 and not (u.owner == wanted or startsWith(u.owner, wanted) or
+                                 baseName(u.owner) == wanted): continue
+      edges.add "{\"caller\":" & jStr(u.owner) & ",\"callee\":" & jStr(u.sym) &
+        ",\"file\":" & jStr(u.file) & ",\"line\":" & $u.line &
+        ",\"col\":" & $u.col & "}"
+    if edges.len > 0:
+      var acc = "["            # `out` is a keyword here, not a variable name
+      for i in 0 ..< edges.len:
+        if i > 0: acc.add ","
+        acc.add edges[i]
+      acc.add "]"
+      return okRes(acc)
+
   let buf = loadBuf(path)
   var tagStack: seq[string] = @[]
   var routines: seq[Routine] = @[]

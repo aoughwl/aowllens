@@ -307,10 +307,34 @@ proc run*(params: seq[string]): Res =
           let fdetail =
             if c.kids.len > 3: baseType(c.kids[3]) else: ""
           emitMember(items, seen, fnm, c.tag, fdetail)
-    for m in 0 ..< idx.ufcs.len:
-      if idx.ufcs[m].typ == t:
-        emitMember(items, seen, idx.ufcs[m].routine, idx.ufcs[m].kind, idx.ufcs[m].sig)
-    let par = lookup(idx.typeParent, t)
+    # UFCS / method candidates: every routine whose FIRST parameter is this
+    # type. The index states each routine's receiver, so this is a filter over
+    # declarations rather than a re-derivation of every signature's first
+    # parameter — and it keys on the checker's own rendering of that type, so
+    # `var Dog`, `sink Dog` and a `Dog` instance all land on the same receiver.
+    var fromIndex = false
+    if lx.ok:
+      for di in 0 ..< lx.decls.len:
+        let d = lx.decls[di]
+        if d.recv.len == 0 or d.name.len == 0: continue
+        if lens.typeKey(d.recv) != t: continue
+        if d.name[0] == '=': continue        # lifecycle hooks are not completions
+        fromIndex = true
+        emitMember(items, seen, d.name,
+                   (if d.kind == "iterator": "iterator" else: "proc"), d.sig)
+    if not fromIndex:
+      for m in 0 ..< idx.ufcs.len:
+        if idx.ufcs[m].typ == t:
+          emitMember(items, seen, idx.ufcs[m].routine, idx.ufcs[m].kind, idx.ufcs[m].sig)
+    # The inheritance edge, from the index when it has one — it is the
+    # checker's own `object of` edge rather than the first symbol under the
+    # object's base slot.
+    var par = ""
+    if ti >= 0: par = lx.types[ti].parent
+    if par.len > 0:
+      let pi = lens.typeIndex(lx, baseName(par))
+      par = if pi >= 0: lx.types[pi].name else: baseName(par)
+    if par.len == 0: par = lookup(idx.typeParent, t)
     if par.len > 0: queue.add par
 
   var arr = "["

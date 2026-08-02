@@ -33,10 +33,11 @@ import core
 
 type
   LensDecl* = object
-    sym*, name*, kind*, typ*, sig*, file*: string
+    sym*, name*, kind*, typ*, sig*, recv*, file*: string
     line*, col*: int
   LensUse* = object
-    sym*, file*: string
+    sym*, owner*, file*: string   ## owner = the routine this sits in, "" at module level
+    role*: string                 ## "call" or "read"
     line*, col*: int
   LensField* = object
     name*, sym*, typ*: string
@@ -106,12 +107,14 @@ proc load*(snif: string): Lens =
     if tag == "d":
       result.decls.add LensDecl(
         sym: strAt(buf, i), name: strAt(buf, i + 1), kind: strAt(buf, i + 2),
-        typ: strAt(buf, i + 3), sig: strAt(buf, i + 4), file: strAt(buf, i + 5),
-        line: intAt(buf, i + 6), col: intAt(buf, i + 7))
+        typ: strAt(buf, i + 3), sig: strAt(buf, i + 4), recv: strAt(buf, i + 5),
+        file: strAt(buf, i + 6),
+        line: intAt(buf, i + 7), col: intAt(buf, i + 8))
     elif tag == "u":
       result.uses.add LensUse(
-        sym: strAt(buf, i), file: strAt(buf, i + 1),
-        line: intAt(buf, i + 2), col: intAt(buf, i + 3))
+        sym: strAt(buf, i), owner: strAt(buf, i + 1), role: strAt(buf, i + 2),
+        file: strAt(buf, i + 3),
+        line: intAt(buf, i + 4), col: intAt(buf, i + 5))
     elif tag == "t":
       var ty = LensType(sym: strAt(buf, i), name: strAt(buf, i + 1),
                         kind: strAt(buf, i + 2), parent: strAt(buf, i + 3),
