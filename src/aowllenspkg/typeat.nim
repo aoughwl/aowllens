@@ -18,11 +18,6 @@ import lens
 import aowlkit/json
 
 type
-  Node = object
-    tag: string
-    sym: string
-    isDef: bool
-    kids: seq[Node]
   Pair = object
     a: string      ## full symbol id
     b: string      ## type base name
@@ -32,25 +27,6 @@ const
                  "tvar", "fld", "efld"]
   RoutineTags = ["proc", "func", "method", "converter", "iterator",
                  "template", "macro"]
-
-proc parseNode(buf: TokenBuf; i: var int): Node =
-  let tok = buf[i]
-  case tok.kind
-  of ParLe:
-    result = Node(tag: tagName(tok), sym: "", isDef: false, kids: @[])
-    inc i
-    while i < buf.len and buf[i].kind != ParRi:
-      result.kids.add parseNode(buf, i)
-    if i < buf.len: inc i
-  of Symbol:
-    result = Node(tag: "", sym: symName(tok), isDef: false, kids: @[])
-    inc i
-  of SymbolDef:
-    result = Node(tag: "", sym: symName(tok), isDef: true, kids: @[])
-    inc i
-  else:
-    result = Node(tag: "", sym: "", isDef: false, kids: @[])
-    inc i
 
 proc among(s: string; xs: openArray[string]): bool =
   for i in 0 ..< xs.len:
@@ -83,6 +59,9 @@ proc baseType(typeNode: Node): string =
   ## Type key: named type → base name; wrapper (ref/ptr/var/…) → wrapped type;
   ## container (seq/array/…) → the constructor (so `seq[Cell]` keys on `seq`, not
   ## the element); primitive → friendly name; else "". Kept in sync with members.nim.
+  if typeNode.isAtom:
+    if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
+    return ""
   if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
   let t = typeNode.tag
   if t == "ref" or t == "ptr" or t == "mut" or t == "var" or t == "out" or
@@ -136,6 +115,19 @@ proc build(n: Node; symType: var seq[Pair]; procRet: var seq[Pair];
   for k in 0 ..< n.kids.len:
     build(n.kids[k], symType, procRet, typeNames)
 
+proc nearestSym(n: Node; wantLine, wantCol: int; sym: var string;
+                bestCol: var int) =
+  ## The symbol atom whose start is at or nearest to the LEFT of the cursor on
+  ## that line (an identifier the cursor sits on or just after).
+  if n.isAtom:
+    if n.kind == Symbol or n.kind == SymbolDef:
+      if n.line == wantLine and n.col <= wantCol and n.col > bestCol:
+        bestCol = n.col
+        sym = n.sym
+    return
+  for k in n.kids:
+    nearestSym(k, wantLine, wantCol, sym, bestCol)
+
 proc run*(params: seq[string]): Res =
   if params.len < 3:
     return errRes("usage: aowllens typeat <file.s.nif> <line> <col>", 1)
@@ -164,33 +156,20 @@ proc run*(params: seq[string]): Res =
       if t.len > 0:
         return okRes("{\"type\":" & jStr(t) & ",\"sym\":" & jStr(sym) & "}")
 
-  let buf = loadBuf(path)
-
-  # Resolution tables from the parsed forest.
-  var roots: seq[Node] = @[]
-  var i = 0
-  while i < buf.len:
-    roots.add parseNode(buf, i)
   var symType: seq[Pair] = @[]
   var procRet: seq[Pair] = @[]
   var typeNames: seq[string] = @[]
-  for r in 0 ..< roots.len:
-    build(roots[r], symType, procRet, typeNames)
-
-  # Find the symbol token at (line, col): the symbol whose start is at or nearest
-  # to the left of the cursor on that line (an identifier the cursor sits on/after).
   var bestSym = ""
   var bestCol = -1
-  for k in 0 ..< buf.len:
-    let tok = buf[k]
-    if tok.kind != Symbol and tok.kind != SymbolDef: continue
-    let inf = unpack(pool.man, tok.info)
-    if not inf.file.isValid: continue
-    if int(inf.line) != wantLine: continue
-    let c = int(inf.col)
-    if c <= wantCol and c > bestCol:
-      bestCol = c
-      bestSym = symName(tok)
+  try:
+    var buf = loadBuf(path)
+    let forest = parseForest(buf)
+    for r in forest:
+      build(r, symType, procRet, typeNames)
+    for r in forest:
+      nearestSym(r, wantLine, wantCol, bestSym, bestCol)
+  except:
+    return okRes("{}")
 
   if bestSym.len == 0:
     return okRes("{}")

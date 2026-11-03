@@ -1,19 +1,13 @@
 ## `aowllens render <file.nif> [needle]` — render NIF node(s) as compact
 ## pseudo-Nim. Nimony port of aiflens's heuristic pretty-printer.
+##
+## The tree comes from `core.parseNode`, so an atom's text and a node's children
+## are exactly what the NIF 27 buffer says; only the layout heuristics live here.
 
 import std/[os, strutils]
 include "nifprelude"
 import core
 import aowlkit/json
-
-type
-  RNode = ref object
-    isAtom: bool
-    tag: string
-    atom: string
-    isSymDef: bool
-    sym: string
-    children: seq[RNode]
 
 const maxLines = 40
 
@@ -24,7 +18,7 @@ proc among(s: string; items: openArray[string]): bool =
     if items[i] == s: return true
   return false
 
-proc tailFrom(cs: seq[RNode]; startIdx: int): seq[RNode] =
+proc tailFrom(cs: seq[Node]; startIdx: int): seq[Node] =
   result = @[]
   var i = startIdx
   while i < cs.len:
@@ -59,21 +53,6 @@ proc binOp(tag: string): string =
   of "xor": "xor"
   else: ""
 
-# ── atom / symbol ────────────────────────────────────────────────────────────
-
-proc atomStr(tok: PackedToken): string =
-  case tok.kind
-  of DotToken: "."
-  of Ident: pool.strings[tok.litId]
-  of Symbol: symName(tok)
-  of SymbolDef: symName(tok)
-  of StringLit: "\"" & pool.strings[tok.litId] & "\""
-  of CharLit: "'" & $tok.charLit & "'"
-  of IntLit: $pool.integers[tok.intId]
-  of UIntLit: $pool.uintegers[tok.uintId]
-  of FloatLit: $pool.floats[tok.floatId]
-  else: ""
-
 proc demangle(s: string): string =
   if s.len == 0: return ""
   if s == ".": return ""
@@ -91,48 +70,20 @@ proc demangle(s: string): string =
         return name
   return s
 
-# ── buffer -> tree ───────────────────────────────────────────────────────────
-
-proc parseNode(buf: TokenBuf; i: var int): RNode =
-  if i >= buf.len:
-    return RNode(isAtom: true, tag: "", atom: "", isSymDef: false, sym: "",
-                 children: @[])
-  let tok = buf[i]
-  case tok.kind
-  of ParLe:
-    result = RNode(isAtom: false, tag: tagName(tok), atom: "", isSymDef: false,
-                   sym: "", children: @[])
-    inc i
-    while i < buf.len and buf[i].kind != ParRi:
-      result.children.add parseNode(buf, i)
-    if i < buf.len: inc i
-  of ParRi:
-    inc i
-    result = RNode(isAtom: true, tag: "", atom: "", isSymDef: false, sym: "",
-                   children: @[])
-  of SymbolDef:
-    result = RNode(isAtom: true, tag: "", atom: atomStr(tok), isSymDef: true,
-                   sym: symName(tok), children: @[])
-    inc i
-  else:
-    result = RNode(isAtom: true, tag: "", atom: atomStr(tok), isSymDef: false,
-                   sym: "", children: @[])
-    inc i
-
 # ── tree -> pseudo-Nim ───────────────────────────────────────────────────────
 
-proc renderNode(n: RNode): string
+proc renderNode(n: Node): string
 
-proc rr(n: RNode): string =
+proc rr(n: Node): string =
   if n.isAtom: demangle(n.atom) else: renderNode(n)
 
-proc nonempty(cs: seq[RNode]): seq[string] =
+proc nonempty(cs: seq[Node]): seq[string] =
   result = @[]
   for i in 0 ..< cs.len:
     let r = rr(cs[i])
     if r.len > 0: result.add r
 
-proc childNodes(cs: seq[RNode]; tag: string): seq[RNode] =
+proc childNodes(cs: seq[Node]; tag: string): seq[Node] =
   result = @[]
   for i in 0 ..< cs.len:
     if not cs[i].isAtom and cs[i].tag == tag: result.add cs[i]
@@ -142,10 +93,10 @@ proc indentBlock(s: string): string =
   for l in splitLines(s): parts.add "  " & l
   result = joinSeq(parts, "\n")
 
-proc renderNode(n: RNode): string =
+proc renderNode(n: Node): string =
   if n.isAtom: return demangle(n.atom)
   let tag = n.tag
-  let ch = n.children
+  let ch = n.kids
 
   if tag == "stmts":
     var lines: seq[string] = @[]
@@ -240,7 +191,7 @@ proc renderNode(n: RNode): string =
     for i in 0 ..< ch.len:
       let c = ch[i]
       if c.isAtom: continue
-      let cc = c.children
+      let cc = c.kids
       if c.tag == "elif" and cc.len >= 2:
         parts.add tag & " " & rr(cc[0]) & ": " & rr(cc[1])
       elif c.tag == "else" and cc.len > 0:
@@ -298,15 +249,15 @@ proc run*(params: seq[string]): Res =
   var items: seq[string] = @[]
   try:
     var buf = loadBuf(path)
-    var i = 0
-    let root = parseNode(buf, i)
-    if root != nil and not root.isAtom:
-      for ci in 0 ..< root.children.len:
-        let c = root.children[ci]
-        if c.isAtom or c.children.len == 0: continue
-        let f0 = c.children[0]
+    let forest = parseForest(buf)
+    let root = rootOf(forest)
+    if not root.isEmpty and not root.isAtom:
+      for ci in 0 ..< root.kids.len:
+        let c = root.kids[ci]
+        if c.isAtom or c.kids.len == 0: continue
+        let f0 = c.kids[0]
         if not f0.isAtom: continue
-        let sym = if f0.isSymDef: f0.sym else: f0.atom
+        let sym = if f0.isDef: f0.sym else: f0.atom
         if sym.len == 0 or sym == ".": continue
         var name = baseName(sym)
         if name.len == 0: name = demangle(f0.atom)

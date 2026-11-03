@@ -1,8 +1,9 @@
 ## `aowllens calls <file.s.nif> [symbol]` — one JSON object per CALL expression
-## found inside a routine body: {caller, callee, file, line, col}. `caller` is the
-## enclosing routine's symbol; `callee` is the called symbol. Feeds call-hierarchy
-## tooling (e.g. aowllsp outgoing calls). If [symbol] is given, only calls whose
-## caller matches (by full sym, prefix, or basename) are reported.
+## found inside a routine body: {caller, callee, file, line, col}. `caller` is
+## the enclosing routine's symbol; `callee` is the called symbol. Feeds
+## call-hierarchy tooling (e.g. aowllsp outgoing calls). If [symbol] is given,
+## only calls whose caller matches (by full sym, prefix, or basename) are
+## reported.
 
 import std/[os, strutils]
 include "nifprelude"
@@ -17,10 +18,27 @@ proc isRoutineTag(t: string): bool =
   else:
     false
 
-type
-  Routine = object
-    depth: int      ## tagStack length at the routine's ParLe
-    caller: string  ## the routine's own symbol (empty until its SymbolDef seen)
+proc routineName(n: Node): string =
+  ## The routine's own symbol: its first SymbolDef child.
+  for k in n.kids:
+    if k.isAtom and k.isDef: return k.sym
+  return ""
+
+proc walk(n: Node; caller, wanted: string; items: var seq[string]) =
+  if n.isAtom: return
+  var inner = caller
+  if isRoutineTag(n.tag):
+    let nm = routineName(n)
+    if nm.len > 0: inner = nm
+  elif n.tag == "call" and caller.len > 0:
+    if n.kids.len > 0 and n.kids[0].isAtom and n.kids[0].kind == Symbol:
+      let callee = n.kids[0].sym
+      if wanted.len == 0 or caller == wanted or startsWith(caller, wanted) or
+          baseName(caller) == wanted:
+        items.add "{\"caller\":" & jStr(caller) & ",\"callee\":" & jStr(callee) &
+          posFragment(n.kids[0]) & "}"
+  for k in n.kids:
+    walk(k, inner, wanted, items)
 
 proc run*(params: seq[string]): Res =
   if params.len < 1:
@@ -54,38 +72,14 @@ proc run*(params: seq[string]): Res =
       acc.add "]"
       return okRes(acc)
 
-  let buf = loadBuf(path)
-  var tagStack: seq[string] = @[]
-  var routines: seq[Routine] = @[]
   var items: seq[string] = @[]
-  for i in 0 ..< buf.len:
-    let tok = buf[i]
-    case tok.kind
-    of ParLe:
-      let t = tagName(tok)
-      tagStack.add t
-      if isRoutineTag(t):
-        routines.add Routine(depth: tagStack.len, caller: "")
-      elif t == "call":
-        # callee is the immediately-following token when it is a Symbol.
-        if i + 1 < buf.len and buf[i+1].kind == Symbol and routines.len > 0:
-          let caller = routines[routines.len - 1].caller
-          let callee = symName(buf[i+1])
-          if caller.len > 0 and (wanted.len == 0 or caller == wanted or
-              startsWith(caller, wanted) or baseName(caller) == wanted):
-            items.add "{\"caller\":" & jStr(caller) &
-              ",\"callee\":" & jStr(callee) & posFragment(buf[i+1]) & "}"
-    of ParRi:
-      if routines.len > 0 and routines[routines.len - 1].depth == tagStack.len:
-        routines.setLen(routines.len - 1)
-      if tagStack.len > 0: tagStack.setLen(tagStack.len - 1)
-    of SymbolDef:
-      # The routine's own name: first SymbolDef directly under the routine tag.
-      if routines.len > 0 and routines[routines.len - 1].caller.len == 0 and
-          routines[routines.len - 1].depth == tagStack.len:
-        routines[routines.len - 1].caller = symName(tok)
-    else:
-      discard
+  try:
+    var buf = loadBuf(path)
+    let forest = parseForest(buf)
+    for r in forest:
+      walk(r, "", wanted, items)
+  except:
+    items = @[]
   var arr = "["
   for i in 0 ..< items.len:
     if i > 0: arr.add ","

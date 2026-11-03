@@ -18,12 +18,48 @@ proc humanName(sym: string): string =
   if result.endsWith(".Obj"):
     result.setLen(result.len - 4)
 
-type
-  TypeDecl = object
-    depth: int    ## tagStack length at the `type` ParLe
-    sym: string   ## the type's SymbolDef (empty until seen)
-    pos: string   ## posFragment of the SymbolDef token
-    done: bool    ## an object node has already been captured for this decl
+proc firstSym(n: Node): string =
+  ## The first symbol name anywhere in `n` (depth-first) — the base symbol out
+  ## of a wrapper like `(ref Base (notnil))`.
+  if n.isAtom:
+    if n.sym.len > 0: return n.sym
+    return ""
+  for k in n.kids:
+    let s = firstSym(k)
+    if s.len > 0: return s
+  return ""
+
+proc walk(n: Node; wanted: string; items: var seq[string]) =
+  if n.isAtom: return
+  if n.tag == "type":
+    var symNode: Node
+    var found = false
+    for k in n.kids:
+      if k.isAtom and k.isDef:
+        symNode = k
+        found = true
+        break
+    if found:
+      for k in n.kids:
+        if not k.isAtom and k.tag == "object":
+          var parent = ""
+          if k.kids.len > 0:
+            let f = k.kids[0]
+            if f.isAtom and f.kind == Symbol:
+              parent = f.sym
+            elif not f.isAtom:
+              parent = firstSym(f)
+          let name = humanName(symNode.sym)
+          if wanted.len == 0 or symNode.sym == wanted or
+              startsWith(symNode.sym, wanted) or name == wanted or
+              baseName(symNode.sym) == wanted:
+            let parentName = if parent.len > 0: humanName(parent) else: ""
+            items.add "{\"type\":" & jStr(symNode.sym) & ",\"name\":" & jStr(name) &
+              ",\"parent\":" & jStr(parent) & ",\"parentName\":" & jStr(parentName) &
+              posFragment(symNode) & "}"
+          break
+  for k in n.kids:
+    walk(k, wanted, items)
 
 proc run*(params: seq[string]): Res =
   if params.len < 1:
@@ -32,60 +68,14 @@ proc run*(params: seq[string]): Res =
   let wanted = if params.len >= 2: params[1] else: ""
   if not fileExists(path):
     return errRes("no such file: " & path, 2)
-  let buf = loadBuf(path)
-  var tagStack: seq[string] = @[]
-  var types: seq[TypeDecl] = @[]
   var items: seq[string] = @[]
-  for i in 0 ..< buf.len:
-    let tok = buf[i]
-    case tok.kind
-    of ParLe:
-      let t = tagName(tok)
-      tagStack.add t
-      if t == "type":
-        types.add TypeDecl(depth: tagStack.len, sym: "", pos: "", done: false)
-      elif t == "object" and types.len > 0 and not types[types.len - 1].done and
-          types[types.len - 1].depth == tagStack.len - 1:
-        # This `object` node is the body of the current type decl. Its parent is
-        # the token right after the `object` tag: a Symbol (direct base), a
-        # nested node like `(ref Base (notnil))` (parent is the first Symbol
-        # inside), or `.` (no parent).
-        var parent = ""
-        if i + 1 < buf.len:
-          let nt = buf[i+1]
-          if nt.kind == Symbol:
-            parent = symName(nt)
-          elif nt.kind == ParLe:
-            var j = i + 2
-            var d = 1
-            while j < buf.len and d > 0:
-              case buf[j].kind
-              of ParLe: inc d
-              of ParRi: dec d
-              of Symbol:
-                parent = symName(buf[j]); break
-              else: discard
-              inc j
-        let td = types[types.len - 1]
-        types[types.len - 1].done = true
-        let name = humanName(td.sym)
-        if wanted.len == 0 or td.sym == wanted or startsWith(td.sym, wanted) or
-            name == wanted or baseName(td.sym) == wanted:
-          let parentName = if parent.len > 0: humanName(parent) else: ""
-          items.add "{\"type\":" & jStr(td.sym) & ",\"name\":" & jStr(name) &
-            ",\"parent\":" & jStr(parent) & ",\"parentName\":" & jStr(parentName) &
-            td.pos & "}"
-    of ParRi:
-      if types.len > 0 and types[types.len - 1].depth == tagStack.len:
-        types.setLen(types.len - 1)
-      if tagStack.len > 0: tagStack.setLen(tagStack.len - 1)
-    of SymbolDef:
-      if types.len > 0 and types[types.len - 1].sym.len == 0 and
-          types[types.len - 1].depth == tagStack.len:
-        types[types.len - 1].sym = symName(tok)
-        types[types.len - 1].pos = posFragment(tok)
-    else:
-      discard
+  try:
+    var buf = loadBuf(path)
+    let forest = parseForest(buf)
+    for r in forest:
+      walk(r, wanted, items)
+  except:
+    items = @[]
   var arr = "["
   for i in 0 ..< items.len:
     if i > 0: arr.add ","

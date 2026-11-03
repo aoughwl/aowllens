@@ -10,8 +10,9 @@
 ## LENS.md), and this module reads it:
 ##
 ##   (d "sym" "name" "kind" "type" "sig" "file" LINE COL)   a declaration
-##   (u "sym" "file" LINE COL)                              a RESOLVED occurrence
-##   (t "sym" "Name" "parent" (f "name" "sym" "type" D E)…) a type's members
+##   (u "sym" "owner" "role" "file" LINE COL)               a RESOLVED occurrence
+##   (t "sym" "Name" "kind" "parent" (f "name" "sym" "type" DEPTH EXPORTED)…)
+##                                                          a type's members
 ##
 ## The `(u …)` records are the ones no amount of care recovers from the tree:
 ## two same-named bindings in two scopes are two symbols, and only the checker
@@ -66,17 +67,49 @@ proc pathFor*(snif: string): string =
   return ""
 
 # ── reading ────────────────────────────────────────────────────────────────
-# A flat token walk: the file is one `(lens …)` node whose children are the
-# records, so a small cursor over the buffer is all it takes. Values are plain
-# string/int literals — no symbol semantics to get wrong.
+# The file is one `(lens …)` node whose children are the records, so a cursor
+# walk over the buffer is all it takes. Values are plain string/int literals —
+# no symbol semantics to get wrong.
 
-proc strAt(buf: TokenBuf; i: int): string =
-  if i < buf.len and buf[i].kind == StringLit: pool.strings[buf[i].litId]
-  else: ""
+proc collectAtoms(c: var Cursor; ss: var seq[string]; ns: var seq[int]) =
+  ## Every atom of one record, in order: strings (and idents) into `ss`,
+  ## integers into `ns`.
+  c.loopInto:
+    case c.kind
+    of StrLit, Ident: ss.add strVal(c)
+    of IntLit: ns.add int(intVal(c))
+    else: discard
+    skip c
 
-proc intAt(buf: TokenBuf; i: int): int =
-  if i < buf.len and buf[i].kind == IntLit: int(pool.integers[buf[i].intId])
-  else: 0
+proc strAt(ss: seq[string]; i: int): string =
+  if i < ss.len: ss[i] else: ""
+
+proc intAt(ns: seq[int]; i: int): int =
+  if i < ns.len: ns[i] else: 0
+
+proc readType(c: var Cursor; ty: var LensType) =
+  var head: seq[string] = @[]
+  c.loopInto:
+    case c.kind
+    of TagLit:
+      if tagName(c) == "f":
+        var fs: seq[string] = @[]
+        var fn: seq[int] = @[]
+        collectAtoms(c, fs, fn)
+        ty.fields.add LensField(name: strAt(fs, 0), sym: strAt(fs, 1),
+                                typ: strAt(fs, 2), depth: intAt(fn, 0),
+                                exported: intAt(fn, 1) != 0)
+      else:
+        skip c
+    of StrLit, Ident:
+      head.add strVal(c)
+    else:
+      discard
+    skip c
+  ty.sym = strAt(head, 0)
+  ty.name = strAt(head, 1)
+  ty.kind = strAt(head, 2)
+  ty.parent = strAt(head, 3)
 
 proc load*(snif: string): Lens =
   ## Read the sidecar belonging to `snif`. `ok = false` when there is none, or
@@ -91,56 +124,36 @@ proc load*(snif: string): Lens =
     buf = loadBuf(path)
   except:
     return
-  var i = 0
-  # Step into the `(lens …)` root.
-  while i < buf.len and not (buf[i].kind == ParLe and tagName(buf[i]) == "lens"):
-    inc i
-  if i >= buf.len: return
-  inc i
-  while i < buf.len and buf[i].kind != ParRi:
-    if buf[i].kind != ParLe:
-      inc i
-      continue
-    let tag = tagName(buf[i])
-    let start = i
-    inc i
-    if tag == "d":
-      result.decls.add LensDecl(
-        sym: strAt(buf, i), name: strAt(buf, i + 1), kind: strAt(buf, i + 2),
-        typ: strAt(buf, i + 3), sig: strAt(buf, i + 4), recv: strAt(buf, i + 5),
-        file: strAt(buf, i + 6),
-        line: intAt(buf, i + 7), col: intAt(buf, i + 8))
-    elif tag == "u":
-      result.uses.add LensUse(
-        sym: strAt(buf, i), owner: strAt(buf, i + 1), role: strAt(buf, i + 2),
-        file: strAt(buf, i + 3),
-        line: intAt(buf, i + 4), col: intAt(buf, i + 5))
-    elif tag == "t":
-      var ty = LensType(sym: strAt(buf, i), name: strAt(buf, i + 1),
-                        kind: strAt(buf, i + 2), parent: strAt(buf, i + 3),
-                        fields: @[])
-      var k = i + 4
-      while k < buf.len and buf[k].kind != ParRi:
-        if buf[k].kind == ParLe and tagName(buf[k]) == "f":
-          ty.fields.add LensField(
-            name: strAt(buf, k + 1), sym: strAt(buf, k + 2),
-            typ: strAt(buf, k + 3), depth: intAt(buf, k + 4),
-            exported: intAt(buf, k + 5) != 0)
-          k = k + 7                      # `(f` + 5 values + `)`
-        else:
-          inc k
-      result.types.add ty
-    # Skip the whole record: walk to its matching `)`.
-    i = start
-    var depth = 0
-    while i < buf.len:
-      if buf[i].kind == ParLe: inc depth
-      elif buf[i].kind == ParRi:
-        dec depth
-        if depth == 0:
-          inc i
-          break
-      inc i
+  var c = beginRead(buf)
+  if c.kind != TagLit or tagName(c) != "lens": return
+  c.loopInto:
+    if c.kind == TagLit:
+      let tag = tagName(c)
+      if tag == "d":
+        var ss: seq[string] = @[]
+        var ns: seq[int] = @[]
+        collectAtoms(c, ss, ns)
+        result.decls.add LensDecl(sym: strAt(ss, 0), name: strAt(ss, 1),
+                                  kind: strAt(ss, 2), typ: strAt(ss, 3),
+                                  sig: strAt(ss, 4), recv: strAt(ss, 5),
+                                  file: strAt(ss, 6),
+                                  line: intAt(ns, 0), col: intAt(ns, 1))
+      elif tag == "u":
+        var ss: seq[string] = @[]
+        var ns: seq[int] = @[]
+        collectAtoms(c, ss, ns)
+        result.uses.add LensUse(sym: strAt(ss, 0), owner: strAt(ss, 1),
+                                role: strAt(ss, 2), file: strAt(ss, 3),
+                                line: intAt(ns, 0), col: intAt(ns, 1))
+      elif tag == "t":
+        var ty = LensType(fields: @[])
+        readType(c, ty)
+        result.types.add ty
+      else:
+        skip c
+    else:
+      discard
+    skip c
   result.ok = true
 
 # ── queries ────────────────────────────────────────────────────────────────

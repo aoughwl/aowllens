@@ -22,38 +22,11 @@ import core
 import lens
 import aowlkit/json
 
-type
-  Node = object
-    tag: string        ## list tag for a ParLe node; "" for an atom
-    sym: string        ## symbol name for a Symbol/SymbolDef atom; "" otherwise
-    isDef: bool        ## true for a SymbolDef (a defining occurrence)
-    kids: seq[Node]
-
 const
   BindingTags = ["let", "var", "gvar", "glet", "const", "cursor", "param",
                  "tvar", "result"]
   RoutineTags = ["proc", "func", "method", "converter", "iterator",
                  "template", "macro"]
-
-proc parseNode(buf: TokenBuf; i: var int): Node =
-  ## Recursively read ONE node (atom or `( … )` list) starting at `buf[i]`.
-  let tok = buf[i]
-  case tok.kind
-  of ParLe:
-    result = Node(tag: tagName(tok), sym: "", isDef: false, kids: @[])
-    inc i
-    while i < buf.len and buf[i].kind != ParRi:
-      result.kids.add parseNode(buf, i)
-    if i < buf.len: inc i           # consume the ParRi
-  of Symbol:
-    result = Node(tag: "", sym: symName(tok), isDef: false, kids: @[])
-    inc i
-  of SymbolDef:
-    result = Node(tag: "", sym: symName(tok), isDef: true, kids: @[])
-    inc i
-  else:
-    result = Node(tag: "", sym: "", isDef: false, kids: @[])
-    inc i
 
 proc firstSym(n: Node): string =
   ## The first symbol name anywhere in `n` (depth-first) — used to read the base
@@ -92,6 +65,9 @@ proc baseType(typeNode: Node): string =
   ##     what lets a container receiver AND the routines that take one (`add(x: var
   ##     seq[T])`) key on the same name and match;
   ##   * a primitive (`(i 64)`) → a friendly name (`int`); else "".
+  if typeNode.isAtom:
+    if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
+    return ""
   if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
   let t = typeNode.tag
   if t == "ref" or t == "ptr" or t == "mut" or t == "var" or t == "out" or
@@ -121,12 +97,12 @@ proc findByTag(n: Node; tags: openArray[string]): int =
   return -1
 
 proc findDeep(n: Node; tags: openArray[string]): Node =
-  ## The first node (self or descendant) whose tag is in `tags`; empty Node if none.
-  if among(n.tag, tags): return n
+  ## The first node (self or descendant) whose tag is in `tags`; empty if none.
+  if not n.isAtom and among(n.tag, tags): return n
   for k in 0 ..< n.kids.len:
     let r = findDeep(n.kids[k], tags)
-    if r.tag.len > 0: return r
-  return Node(tag: "", sym: "", isDef: false, kids: @[])
+    if not r.isEmpty: return r
+  return Node()
 
 proc routineSig(n: Node): string =
   ## A compact `(T1, T2): R` signature for a routine node — shown as the detail of
@@ -185,7 +161,7 @@ proc lookupNode(xs: seq[Named]; k: string): Node =
     if xs[i].name == k:
       if best < 0 or xs[i].node.kids.len > xs[best].node.kids.len: best = i
   if best >= 0: return xs[best].node
-  return Node(tag: "", sym: "", isDef: false, kids: @[])
+  return Node()
 
 proc contains(xs: seq[string]; k: string): bool =
   for i in 0 ..< xs.len:
@@ -208,7 +184,7 @@ proc build(n: Node; idx: var Index) =
     let nm = human(declName(n))
     if nm.len > 0:
       let body = findDeep(n, ["object", "enum"])
-      if body.tag.len > 0:
+      if not body.isEmpty:
         idx.typeObj.add Named(name: nm, node: body)
         if body.tag == "object" and body.kids.len > 0:
           # the object's first child is the base-type slot (`.`/Symbol/`(ref …)`)
@@ -243,16 +219,16 @@ proc run*(params: seq[string]): Res =
   let receiver = params[1]
   if not fileExists(path):
     return errRes("no such file: " & path, 2)
-  let buf = loadBuf(path)
 
   # Parse the whole buffer into a forest, then index it.
-  var roots: seq[Node] = @[]
-  var i = 0
-  while i < buf.len:
-    roots.add parseNode(buf, i)
   var idx = Index(bindType: @[], typeObj: @[], typeParent: @[], ufcs: @[])
-  for r in 0 ..< roots.len:
-    build(roots[r], idx)
+  try:
+    var buf = loadBuf(path)
+    let forest = parseForest(buf)
+    for r in forest:
+      build(r, idx)
+  except:
+    discard
 
   # aowlsem's index, when the build wrote one. Its member tables are the
   # checker's own; the receiver resolution below is unchanged (`members` is
@@ -271,7 +247,9 @@ proc run*(params: seq[string]): Res =
     for i in 0 ..< lx.decls.len:
       if lx.decls[i].name == receiver and lx.decls[i].kind != "type":
         let t = lens.typeKey(lx.decls[i].typ)
-        if t.len > 0: (typeName = t; break)
+        if t.len > 0:
+          typeName = t
+          break
   if typeName.len == 0:
     return okRes("[]")
 
