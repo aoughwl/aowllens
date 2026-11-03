@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Build aowllens with the Nimony compiler. It links Nimony's own NIF libraries
-# (nifprelude/nifstreams/symparser/nifindexes from the compiler tree) and the
-# shared aowlkit lib.
+# (nifprelude/nifcore/nifpools/symparser/nifindexes from the compiler tree) and
+# the shared aowlkit lib.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NIMONY="${NIMONY:-$HOME/nimony/bin/nimony}"
 NIMSRC="${NIMONY_SRC:-$HOME/nimony/src}"
 AOWLKIT="${AOWLKIT:-$HOME/aowlkit/src}"
 LOCK="${NIMONY_BUILD_LOCK:-$HOME/.nimony-build.lock}"
+# Nimony's own build parallelism. 0 = one job per core; set 1 on a shared or
+# memory-tight machine where a parallel compile is not affordable.
+PARALLEL="${NIMONY_PARALLEL:-0}"
 cd "$ROOT"
 
 build() {
   "$NIMONY" c --base:src -p:"$NIMSRC/lib" -p:"$NIMSRC" -p:"$AOWLKIT" \
-    -d:nimony src/aowllens.nim 2>&1
+    -d:nimony --parallelBuild:"$PARALLEL" src/aowllens.nim 2>&1
 }
 
 run_locked() {
