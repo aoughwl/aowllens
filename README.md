@@ -52,7 +52,9 @@ aowllens version
 ## Faithful to aiflens
 
 `tests/difftest.sh` generates a real `.s.nif` with `nimony check` and compares
-every command against the Nim-2 `aiflens` it replaces:
+every command against the Nim-2 `aiflens` it replaces. It needs a Nim-2 toolchain
+with aiflens built and has NOT been re-run after the NIF 27 port, so the parity
+claims below are upstream's, not this branch's:
 
 - `decls`, `outline`, `query`, `index` — **byte-identical**.
 - `render` — identical **modulo the hex-case** of `\u00XX` escapes for
