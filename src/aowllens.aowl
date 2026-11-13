@@ -1,6 +1,6 @@
-## aowllens — a NIF lens for tooling, in nimony.
+## aowllens -- a NIF lens for tooling, in aowlmony.
 ##
-## The nimony port of aiflens: a thin CLI over Nimony's own NIF libraries that
+## A thin CLI over the toolchain's own NIF libraries that
 ## reads `nimcache/*.nif` artifacts with the real parser and emits compact JSON
 ## for a host tool (e.g. aowllsp, the aowl-code plugin) to consume. Because it
 ## links the compiler's libraries, its line-info/symbol/tag handling always

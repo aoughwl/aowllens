@@ -15,7 +15,6 @@ import std/[os, strutils]
 include "nifprelude"
 import core
 import lens
-import aowlkit/json
 
 type
   Node = object
@@ -82,7 +81,7 @@ proc builtinName(tag: string): string =
 proc baseType(typeNode: Node): string =
   ## Type key: named type → base name; wrapper (ref/ptr/var/…) → wrapped type;
   ## container (seq/array/…) → the constructor (so `seq[Cell]` keys on `seq`, not
-  ## the element); primitive → friendly name; else "". Kept in sync with members.nim.
+  ## the element); primitive → friendly name; else "". Kept in sync with members.aowl.
   if typeNode.sym.len > 0: return human(baseName(typeNode.sym))
   let t = typeNode.tag
   if t == "ref" or t == "ptr" or t == "mut" or t == "var" or t == "out" or

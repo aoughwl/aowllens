@@ -8,7 +8,6 @@ import std/[os, strutils]
 include "nifprelude"
 import core
 import lens
-import aowlkit/json
 
 proc isRoutineTag(t: string): bool =
   case t

@@ -6,7 +6,6 @@ include "nifprelude"
 import core
 import symparser
 import nifindexes
-import aowlkit/json
 
 proc findChecksum(indexName: string): string =
   ## The `(checksum "…")` line lives in the index file text (NifIndex has no

@@ -20,7 +20,6 @@ import std/[os, strutils]
 include "nifprelude"
 import core
 import lens
-import aowlkit/json
 
 type
   Node = object
@@ -65,7 +64,7 @@ proc firstSym(n: Node): string =
   return ""
 
 proc human(name: string): string =
-  ## Drop nimony's internal `.Obj` object-suffix so a `ref object` type keys on
+  ## Drop the compiler's internal `.Obj` object-suffix so a `ref object` type keys on
   ## the name the user wrote (`Dog.Obj` → `Dog`).
   result = name
   if result.endsWith(".Obj"):
@@ -216,9 +215,10 @@ proc build(n: Node; idx: var Index) =
           if p.len > 0: idx.typeParent.add Pair(a: nm, b: human(baseName(p)))
   elif among(n.tag, RoutineTags):
     let nm = declName(n)
-    # Skip nimony's generated lifecycle hooks (`=destroy`/`=copy`/…) — they take
-    # the type as first param but are never a user-facing completion.
-    if nm.len > 0 and nm[0] != '=':
+    # Skip the compiler's generated lifecycle hooks (`=destroy`/`=copy`/…) — they take
+    # the type as first param but are never a user-facing completion. aowlmony also
+    # mints enum helpers named like `dollar`.Color` (a backtick in the base name): skip those too.
+    if nm.len > 0 and nm[0] != '=' and find(nm, '`') < 0:
       let pi = findByTag(n, ["params"])
       if pi >= 0 and n.kids[pi].kids.len > 0:
         let p0 = n.kids[pi].kids[0]

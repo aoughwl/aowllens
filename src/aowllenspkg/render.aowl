@@ -1,10 +1,9 @@
 ## `aowllens render <file.nif> [needle]` — render NIF node(s) as compact
-## pseudo-Nim. Nimony port of aiflens's heuristic pretty-printer.
+## pseudo-source. Heuristic pretty-printer for NIF nodes.
 
 import std/[os, strutils]
 include "nifprelude"
 import core
-import aowlkit/json
 
 type
   RNode = ref object
@@ -17,7 +16,7 @@ type
 
 const maxLines = 40
 
-# ── small helpers replacing Nim2 slices / sets / Table ───────────────────────
+# ── small helpers replacing slices / sets / Table ───────────────────────
 
 proc among(s: string; items: openArray[string]): bool =
   for i in 0 ..< items.len:
@@ -119,7 +118,7 @@ proc parseNode(buf: TokenBuf; i: var int): RNode =
                    sym: "", children: @[])
     inc i
 
-# ── tree -> pseudo-Nim ───────────────────────────────────────────────────────
+# ── tree -> pseudo-source ───────────────────────────────────────────────────────
 
 proc renderNode(n: RNode): string
 

@@ -2,7 +2,7 @@
 ## declaration and its direct inheritance parent:
 ## {type, name, parent, parentName, file, line, col}. `type` is the full type
 ## symbol of the object-bearing decl; `name`/`parentName` are the human base
-## names (the auto-generated `.Obj` suffix nimony adds behind a `ref object` is
+## names (the auto-generated `.Obj` suffix the compiler may add behind a `ref object` is
 ## stripped). `parent`/`parentName` are empty for a root/non-inheriting type.
 ## Feeds type-hierarchy tooling (e.g. aowllsp). If [symbol] is given, only types
 ## matching it (by full sym, prefix, or base name) are reported.
@@ -10,7 +10,6 @@
 import std/[os, strutils]
 include "nifprelude"
 import core
-import aowlkit/json
 
 proc humanName(sym: string): string =
   ## Base name with the internal `.Obj` object-suffix removed (`Dog.Obj` -> `Dog`).

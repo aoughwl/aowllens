@@ -1,11 +1,32 @@
-## Shared helpers for aowllens command modules — the nimony port of aiflens's
-## core. NIF reading is unchanged (nimony compiles the compiler's NIF libs); JSON
-## OUTPUT is built as strings via aowlkit/json instead of Nim2's JsonNode.
+## Shared helpers for aowllens command modules. NIF reading goes through the
+## toolchain's own NIF libraries; JSON OUTPUT is built as strings with the
+## local `jStr` below.
 
 import std/[syncio, strutils]
 include "nifprelude"
 import symparser
-import aowlkit/json
+
+proc hex2(n: int): string =
+  const digits = "0123456789abcdef"
+  result = ""
+  result.add digits[(n shr 4) and 15]
+  result.add digits[n and 15]
+
+proc jStr*(s: string): string =
+  ## A JSON string literal (control chars escaped as lowercase \u00xx; bytes
+  ## >= 0x80 pass through as UTF-8).
+  result = "\""
+  for c in s:
+    case c
+    of '"': result.add "\\\""
+    of '\\': result.add "\\\\"
+    of '\n': result.add "\\n"
+    of '\r': result.add "\\r"
+    of '\t': result.add "\\t"
+    else:
+      if ord(c) < 0x20: result.add "\\u00" & hex2(ord(c))
+      else: result.add c
+  result.add "\""
 
 type
   Res* = object
