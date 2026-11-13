@@ -1,3 +1,2 @@
-/bin/
-/nimcache/
-__pycache__/
+bin/
+nimcache/

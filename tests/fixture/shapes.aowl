@@ -1,0 +1,24 @@
+import std/syncio
+
+type
+  Beast = ref object of RootObj
+    name: string
+  Dog = ref object of Beast
+    breed: string
+  Inner = object
+    x: int
+    y: int
+  Outer = object
+    inner: Inner
+    tag: string
+  Color = enum red, green, blue
+
+proc wag(d: Dog): bool = true
+
+proc use(o: Outer; d: Dog): int =
+  discard d.breed
+  result = o.inner.x
+  if wag(d): result = result + 1
+
+echo use(Outer(), Dog(breed: "x"))
+export syncio
