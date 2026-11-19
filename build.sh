@@ -2,7 +2,7 @@
 # Build bin/aowllens.exe with the aowlmony compiler.
 #
 # Overrides: AOWLMONY_ROOT (toolchain root; default ~/dev/toolchain/aowlmony/root),
-#            AOWLJSONREF (jsonref src dir; default ~/dev/jsonref/src).
+#            AOWLJSONREF (jsonref src dir; default ~/dev/std/jsonref/src).
 #
 # The compiler exits 0 even when it produced no executable, and writes the exe
 # into nimcache/<hash>/. So: delete any cached exe first, build (retrying once,
@@ -11,7 +11,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOWLMONY_ROOT="${AOWLMONY_ROOT:-$HOME/dev/toolchain/aowlmony/root}"
-JSONREF="${AOWLJSONREF:-$HOME/dev/jsonref/src}"
+JSONREF="${AOWLJSONREF:-$HOME/dev/std/jsonref/src}"
 COMPILER="$AOWLMONY_ROOT/bin/aowlmony.exe"
 [[ -x "$COMPILER" ]] || { echo "build.sh: no compiler at $COMPILER" >&2; exit 1; }
 if command -v cygpath >/dev/null 2>&1; then
